@@ -1,36 +1,10 @@
 const express = require("express");
 const cors = require("cors");
 const puppeteer = require("puppeteer");
-const FormData = require("form-data");
-const fetch = require("node-fetch");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
-
-const APP_ID = process.env.APP_ID;
-const APP_SECRET = process.env.APP_SECRET;
-
-async function getTenantAccessToken() {
-  if (!APP_ID || !APP_SECRET) {
-    throw new Error("缺少 APP_ID / APP_SECRET 环境变量");
-  }
-
-  const resp = await fetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
-    method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify({
-      app_id: APP_ID,
-      app_secret: APP_SECRET,
-    }),
-  });
-
-  const json = await resp.json();
-  if (json.code !== 0) {
-    throw new Error(`获取 tenant_access_token 失败: ${json.msg} (${json.code})`);
-  }
-  return json.tenant_access_token;
-}
 
 async function renderPdfBuffer(data) {
   const browser = await puppeteer.launch({
@@ -159,45 +133,15 @@ async function renderPdfFromTemplate(template, data, rows) {
   }
 }
 
-async function uploadToFeishu(pdfBuffer, tenantAccessToken, appToken) {
-  const form = new FormData();
-  form.append("file_name", `record_${Date.now()}.pdf`);
-  form.append("parent_type", "bitable_file");
-  form.append("parent_node", appToken);
-  form.append("size", String(pdfBuffer.length));
-  form.append("file", pdfBuffer, {
-    filename: "record.pdf",
-    contentType: "application/pdf",
-  });
-
-  const resp = await fetch("https://open.feishu.cn/open-apis/drive/v1/medias/upload_all", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${tenantAccessToken}`,
-      ...form.getHeaders(),
-    },
-    body: form,
-  });
-
-  const json = await resp.json();
-  if (json.code !== 0) {
-    throw new Error(`上传失败: ${json.msg || "unknown"} (code=${json.code})`);
-  }
-  return json.data.file_token;
-}
-
 app.post("/render", async (req, res) => {
   try {
-    const { data, rows, template, appToken } = req.body || {};
-    if (!appToken) return res.status(400).json({ error: "缺少 appToken" });
-
-    const tenantAccessToken = await getTenantAccessToken();
+    const { data, rows, template } = req.body || {};
     const pdfBuffer = template
       ? await renderPdfFromTemplate(template, data || {}, rows || [])
       : await renderPdfBuffer(data || {});
-    const fileToken = await uploadToFeishu(pdfBuffer, tenantAccessToken, appToken);
-
-    res.json({ fileToken });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="document.pdf"');
+    res.send(pdfBuffer);
   } catch (e) {
     res.status(500).json({ error: e.message || "render failed" });
   }
