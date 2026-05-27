@@ -57,6 +57,76 @@ function replaceVariables(input, data) {
   });
 }
 
+function renderTextElement(el, data) {
+  const html = replaceVariables(el?.text || "", data || {});
+  return `<div style="${baseElementStyle(el)}font-size:${el.fontSize || 14}px;font-weight:${el.fontWeight || 400};color:${escapeHtml(
+    el.color || "#111"
+  )};">${html}</div>`;
+}
+
+function renderTableElement(el, data, rows) {
+  const columns = Array.isArray(el?.columns) ? el.columns : [];
+  if (columns.length === 0) return `<div style="${baseElementStyle(el)}"></div>`;
+  const list = Array.isArray(rows) && rows.length > 0 ? rows : [data || {}];
+  const thead = columns
+    .map(
+      (col) =>
+        `<th style="border:1px solid #d9d9d9;padding:4px 6px;text-align:left;background:#fafafa;">${escapeHtml(
+          col.title || col.fieldName || ""
+        )}</th>`
+    )
+    .join("");
+  const tbody = list
+    .map((row) => {
+      const tds = columns
+        .map(
+          (col) =>
+            `<td style="border:1px solid #d9d9d9;padding:4px 6px;text-align:left;">${escapeHtml(
+              row?.[col.fieldName] || ""
+            )}</td>`
+        )
+        .join("");
+      return `<tr>${tds}</tr>`;
+    })
+    .join("");
+  return `<div style="${baseElementStyle(el)}"><div style="font-weight:600;margin-bottom:4px;">${escapeHtml(
+    el.tableTitle || "表格"
+  )}</div><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></div>`;
+}
+
+function renderImageElement(el, data) {
+  const value = el?.fieldName ? data?.[el.fieldName] || "" : "";
+  const src = value || el?.imageUrl || "";
+  if (!src) {
+    return `<div style="${baseElementStyle(el)}border:1px dashed #bbb;color:#999;display:flex;align-items:center;justify-content:center;">图片</div>`;
+  }
+  return `<img src="${escapeHtml(src)}" style="${baseElementStyle(el)}object-fit:contain;" />`;
+}
+
+function renderQrElement(el, data) {
+  const value = el?.fieldName ? data?.[el.fieldName] || "" : "";
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(value)}`;
+  return `<img src="${src}" style="${baseElementStyle(el)}object-fit:contain;" />`;
+}
+
+function renderBarcodeElement(el, data) {
+  const value = el?.fieldName ? data?.[el.fieldName] || "" : "";
+  const src = `https://barcode.tec-it.com/barcode.ashx?code=Code128&data=${encodeURIComponent(value)}&translate-esc=true`;
+  return `<img src="${src}" style="${baseElementStyle(el)}object-fit:contain;" />`;
+}
+
+function renderLineElement(el) {
+  const style = el?.lineStyle || "solid";
+  const weight = Math.max(1, Number(el?.lineWeight || 1));
+  return `<div style="${baseElementStyle(el)}border-top:${weight}px ${style} #333;height:0;"></div>`;
+}
+
+function baseElementStyle(el) {
+  return `position:absolute;left:${Number(el?.x || 0)}px;top:${Number(el?.y || 0)}px;width:${Number(
+    el?.w || 0
+  )}px;height:${Number(el?.h || 0)}px;box-sizing:border-box;overflow:hidden;`;
+}
+
 function buildTableHtml(template, rows) {
   const columns = Array.isArray(template?.columns) ? template.columns : [];
   if (columns.length === 0) return "";
@@ -89,8 +159,33 @@ function buildTableHtml(template, rows) {
 
 function buildRenderHtml(template, data, rows) {
   const title = escapeHtml(template?.title || "排版文档");
-  const richText = replaceVariables(template?.richTextHtml || "", data || {});
-  const tableHtml = buildTableHtml(template, rows);
+  const isCanvasMode = Array.isArray(template?.elements);
+  const pageWidth = Number(template?.page?.width || 794);
+  const pageHeight = Number(template?.page?.height || 1123);
+
+  let bodyContent = "";
+  if (isCanvasMode) {
+    const elements = [...(template.elements || [])].sort(
+      (a, b) => Number(a?.zIndex || 0) - Number(b?.zIndex || 0)
+    );
+    bodyContent = elements
+      .map((el) => {
+        if (el.type === "text") return renderTextElement(el, data || {});
+        if (el.type === "table") return renderTableElement(el, data || {}, rows || []);
+        if (el.type === "image") return renderImageElement(el, data || {});
+        if (el.type === "qrcode") return renderQrElement(el, data || {});
+        if (el.type === "barcode") return renderBarcodeElement(el, data || {});
+        if (el.type === "line") return renderLineElement(el);
+        return "";
+      })
+      .join("");
+    bodyContent = `<section class="page-canvas" style="position:relative;width:${pageWidth}px;height:${pageHeight}px;">${bodyContent}</section>`;
+  } else {
+    const richText = replaceVariables(template?.richTextHtml || "", data || {});
+    const tableHtml = buildTableHtml(template, rows);
+    bodyContent = `<h1>${title}</h1><section class="rich-text">${richText}</section>${tableHtml}`;
+  }
+
   return `
   <html>
     <head>
@@ -110,9 +205,7 @@ function buildRenderHtml(template, data, rows) {
       </style>
     </head>
     <body>
-      <h1>${title}</h1>
-      <section class="rich-text">${richText}</section>
-      ${tableHtml}
+      ${bodyContent}
     </body>
   </html>`;
 }
